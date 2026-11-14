@@ -1,0 +1,15 @@
+# inspect-vo pipeline settings. A changed config produces a separate output version.
+
+dpvo:
+  repo: ~/DPVO                      # DPVO checkout (commit recorded in each manifest)
+  network: ~/DPVO/dpvo.pth          # published weights, not retrained
+  config: ~/DPVO/config/default.yaml   # 96 patches/frame, no loop closure
+  runs: 5                           # DPVO is not deterministic: report median and spread
+
+ingest:
+  stride: 1                         # use every frame; record which frames were used
+
+failures:
+  step_factor: 10.0                 # a step > 10x the median step counts as a jump
+
+output_dir: outputs

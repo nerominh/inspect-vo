@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inspect-vo"
+version = "0.1.0"
+description = "Offline pipeline: phone walkthrough video -> metric top-down map for tagging building defects, using DPVO."
+requires-python = ">=3.10"
+# DPVO, torch and CUDA are installed separately in the `dpvo` conda env (see README).
+# Install this package with `pip install --no-deps -e .` so pip does not touch that env.
+dependencies = [
+    "numpy<2",
+    "opencv-python",
+    "pyyaml",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+inspect-vo = "inspect_vo.cli:main"
+
+[tool.setuptools]
+packages = ["inspect_vo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

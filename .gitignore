@@ -1,0 +1,29 @@
+# Data and outputs: too large for git; keep them in the shared drive
+data/
+datasets/
+results/
+outputs/
+*.mp4
+*.MP4
+*.mov
+*.MOV
+*.avi
+*.tgz
+*.zip
+*.npy
+*.pth
+*.ply
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
