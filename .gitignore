@@ -27,3 +27,7 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Calibration previews and the printed board (regenerate them; not for git)
+calib/*_check.jpg
+board.png

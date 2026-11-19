@@ -18,7 +18,7 @@ Building inspectors film walkthroughs, but indoors there is no GPS, so defect lo
 
 ## What it does
 
-1. Record a walkthrough with a normal phone (no special app).
+1. Record a walkthrough with a normal phone (no AR app; a free camera app may be needed to turn stabilisation off, see [`docs/CALIBRATION.md`](docs/CALIBRATION.md)).
 2. Run the pipeline on a GPU machine. It produces a top-down map of the walk, in metres.
 3. In the viewer, scrub the video, tag the frames where a crack is visible, add a note, and export a report.
 
@@ -57,7 +57,7 @@ Keep the videos in `~/data/pilot/`, not in git.
 | # | Step | Module | What it does | Done when | Status |
 |---|---|---|---|---|---|
 | 0 | Repository skeleton | the whole repo | Package, CLI, tests, configs | `pytest` passes and `inspect-vo --help` works | ✅ |
-| 1 | Calibrate | `inspect_vo/calibrate.py` | Checkerboard video → intrinsics and distortion, saved in DPVO's format `fx fy cx cy k1 k2 p1 p2 k3` | Calib file exists and the reprojection error is under ~0.5 px | ⬜ |
+| 1 | Calibrate | `inspect_vo/calibrate.py` | Checkerboard video → intrinsics and distortion, saved in DPVO's format `fx fy cx cy k1 k2 p1 p2 k3` | Calib file exists and the reprojection error is under ~0.5 px | 🟡 code + tests done ([guide](docs/CALIBRATION.md)); needs a real phone video |
 | 2 | Ingest | `inspect_vo/ingest.py` | Video content hash; table of frame index → **real source timestamp**, so tags point back to the exact moment | Hash and frame table exist for the pilot video | ⬜ |
 | 3 | Run DPVO | `inspect_vo/trajectory.py` | Feed our frames and calibration to DPVO's Python API; save poses (TUM format) and the point cloud; repeated runs | Trajectory file exists for the pilot video (look at it with DPVO's `demo.py` first) | ⬜ |
 | 4 | Detect failures | `inspect_vo/failures.py` | Flag sudden pose jumps (impossible speed or rotation) and split the path into trustworthy segments | A deliberately shaken test video gets split | ⬜ |
@@ -122,7 +122,8 @@ Everything runs in **Linux** (WSL Ubuntu on Windows laptops, or the supervisor's
 ## Usage (planned; commands fill in as steps are built)
 
 ```bash
-inspect-vo calibrate ~/data/pilot/checkerboard.mp4 --square-mm 25 --out calib/phone_minh.txt
+inspect-vo board     --out board.png                                   # printable checkerboard (built)
+inspect-vo calibrate ~/data/pilot/checkerboard.mp4 --square-mm 25 --out calib/phone_minh.txt   # (built)
 inspect-vo ingest    ~/data/pilot/corridor.mp4 --out outputs/corridor/
 inspect-vo track     outputs/corridor/ --calib calib/phone_minh.txt --runs 5
 inspect-vo scale     outputs/corridor/ --frames 120 840 --distance-m 10.0

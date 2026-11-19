@@ -18,9 +18,19 @@ def test_flatten_recovers_floor_plane():
     """Points on a tilted plane + small noise -> normal recovered; 2D distances preserved."""
 
 
-@pending
-def test_calib_roundtrip():
+def test_calib_roundtrip(tmp_path):
     """write_calib then read_calib returns the same K and distortion."""
+    import numpy as np
+
+    from inspect_vo.calibrate import read_calib, write_calib
+    K = np.array([[1450.25, 0, 961.5], [0, 1449.75, 538.25], [0, 0, 1]])
+    dist = np.array([0.1012, -0.2534, 0.0011, -0.0007, 0.0])
+    write_calib(tmp_path / "phone.txt", K, dist)
+    K2, dist2 = read_calib(tmp_path / "phone.txt")
+    np.testing.assert_allclose(K2, K, atol=1e-6)
+    np.testing.assert_allclose(dist2, dist, atol=1e-6)
+    (tmp_path / "pinhole.txt").write_text("535.4 539.2 320.1 247.6\n")   # 4 values: no distortion
+    assert read_calib(tmp_path / "pinhole.txt")[1].size == 0
 
 
 @pending

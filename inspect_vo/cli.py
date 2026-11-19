@@ -6,6 +6,7 @@ exit with a message saying which step and module to implement.
 
 import argparse
 import sys
+from pathlib import Path
 
 from inspect_vo import __version__
 
@@ -18,6 +19,19 @@ def _not_built(step: int, module: str):
     return handler
 
 
+def _board(args: argparse.Namespace) -> int:
+    from inspect_vo.calibrate import make_board
+    print(f"Wrote {make_board(Path(args.out), *args.pattern, args.square_mm)}: print at 100% / actual size")
+    return 0
+
+
+def _calibrate(args: argparse.Namespace) -> int:
+    from inspect_vo.calibrate import run
+    res = run(Path(args.video), Path(args.out), args.square_mm, tuple(args.pattern), every=args.every,
+              max_views=args.max_views, notes=args.notes, free_k3=args.free_k3)
+    return 0 if res.quality != "poor" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="inspect-vo",
@@ -26,13 +40,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
+    p = sub.add_parser("board", help="step 1 helper: write a printable checkerboard (A4, 9x6 inner corners)")
+    p.add_argument("--out", default="board.png")
+    p.add_argument("--pattern", type=int, nargs=2, default=[9, 6], metavar=("COLS", "ROWS"))
+    p.add_argument("--square-mm", type=float, default=25.0)
+    p.set_defaults(func=_board)
+
     p = sub.add_parser("calibrate", help="step 1: checkerboard video -> camera calibration file")
     p.add_argument("video", help="checkerboard video recorded in the walkthrough camera mode")
-    p.add_argument("--square-mm", type=float, required=True, help="checkerboard square side in mm")
+    p.add_argument("--square-mm", type=float, required=True, help="checkerboard square side in mm (measured)")
     p.add_argument("--pattern", type=int, nargs=2, default=[9, 6], metavar=("COLS", "ROWS"),
                    help="inner corners (default: 9 6)")
-    p.add_argument("--out", required=True, help="output calib file, e.g. calib/phone_minh.txt")
-    p.set_defaults(func=_not_built(1, "inspect_vo/calibrate.py"))
+    p.add_argument("--out", required=True,
+                   help="output calib file, e.g. calib/minh_pixel7_1080p_30.txt (.json and _check.jpg go next to it)")
+    p.add_argument("--every", type=int, default=5, help="check every Nth frame (default 5)")
+    p.add_argument("--max-views", type=int, default=40, help="most views used in the fit (default 40)")
+    p.add_argument("--notes", default="", help="phone model, camera app, settings (stored in the .json)")
+    p.add_argument("--free-k3", action="store_true", help="also fit k3 (only for wide-angle lenses)")
+    p.set_defaults(func=_calibrate)
 
     p = sub.add_parser("ingest", help="step 2: hash video, extract frames with real timestamps")
     p.add_argument("video")
