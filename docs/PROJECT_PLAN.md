@@ -75,11 +75,13 @@ The output has **no real-world scale**: the path has the right shape, but its un
 
 **Current priority (decided 2026-11-14):** build the pipeline first. The research questions (E2–E4) come after; E1 is already done (section 10.2).
 
-The pipeline does not exist yet. We write it ourselves, and **DPVO is only one step inside it (step 3)**. The code lives in **our own repository** (working name `inspect-vo`), separate from `~/DPVO`. DPVO stays an installed dependency that we never edit, so the recorded DPVO commit stays meaningful.
+The pipeline is being built step by step, and **DPVO is only one step inside it (step 3)**. The code lives in **our own repository** (`inspect-vo`), separate from `~/DPVO`. DPVO stays an installed dependency that we never edit, so the recorded DPVO commit stays meaningful.
+
+**Status update (2026-11-21):** the teammate's `feat/calibration` branch contains the step-1 calibration implementation, CLI support, guide, and synthetic tests; real phone-video validation is still required. Step 2 is being implemented independently on `feat/video-ingest`, based on that branch. The calibration branch itself is not modified by the ingest work.
 
 #### First: recordings needed before coding (physical tasks)
 
-Every step after step 0 needs real footage to test on.
+The end-to-end pipeline needs real footage for validation; unit-level checks can also use synthetic inputs.
 
 1. **Calibration video.** Print an OpenCV checkerboard (9×6 inner corners), tape it to something flat and rigid, and **measure one square's side** with a ruler (e.g. 25 mm). Record 30–60 s of video of the board:
    - Use the **same camera mode as the walkthroughs**: 1080p, 30 fps, main 1× lens, stabilisation off if the phone allows it, no zoom.
@@ -90,19 +92,19 @@ Every step after step 0 needs real footage to test on.
 
 #### The steps, in the order data flows through them
 
-| # | Step | What we write | Uses | Done when |
-|---|---|---|---|---|
-| 0 | **Repository skeleton** | Folders per step, a CLI entry point, pytest set-up, README, git | Python | `pytest` runs and the CLI prints its help text |
-| 1 | **Calibrate** (once per phone) | Script: checkerboard video → camera settings and lens distortion, saved in DPVO's calib format `fx fy cx cy k1 k2 p1 p2 k3` | OpenCV | The calib file exists and the reprojection error is under ~0.5 px |
-| 2 | **Ingest** | Hash the video (its ID); read every frame's **real timestamp**; save a table frame number → video time, so a tag can point back to the exact moment in the original video | OpenCV / FFmpeg | Table and hash exist for the pilot video |
-| 3 | **Run DPVO** | Feed our frames and calibration to DPVO's Python API; save poses (TUM format) and 3D points; 5 runs | **DPVO, the only step that uses it** | A trajectory file exists for the pilot video (do a quick look with `demo.py` first) |
-| 4 | **Detect failures** | Scan the path for sudden jumps (impossible speed or rotation) and split it into trustworthy segments rather than draw one wrong map | numpy | A deliberately shaken test video gets split |
-| 5 | **Scale to metres** | User gives two frames and the real distance between them → multiply the path by real ÷ estimated distance | numpy | The two pilot floor marks come out ~10 m apart |
-| 6 | **Flatten to a top-down map** | Fit a plane to the path, take its least-varying direction as "up", project onto the floor; save JSON and PNG | numpy, matplotlib | The PNG of the pilot walk looks like the corridor |
-| 7 | **Batch command + manifest** | One command running steps 2–6 on many videos; a manifest per run (video hash, calib, DPVO commit, config, seed); one failed video does not stop the batch | Python CLI | A batch of 2+ videos produces outputs and manifests |
-| 8 | **Tests** | Scaling and flattening on fake paths with known answers; calibration parsing; timestamp → frame mapping | pytest | All tests pass |
-| 9 | **Viewer** (weeks 5–6) | Web page loading the video and map JSON: scrubbing moves a dot on the map; "tag" saves frame, position and note; "export" writes the report | HTML/JS, no GPU | Tag the pilot's two floor marks and export a report |
-| 10 | **Evaluation scripts** (later, for E3/E4) | Tag error vs. tape-measured marks; loop error; drift vs. distance | Python | Run on the full recording campaign |
+| # | Step | What we write | Uses | Done when | Current status |
+|---|---|---|---|---|---|
+| 0 | **Repository skeleton** | Folders per step, a CLI entry point, pytest set-up, README, git | Python | `pytest` runs and the CLI prints its help text | Done on `main` |
+| 1 | **Calibrate** (once per phone) | Script: checkerboard video → camera settings and lens distortion, saved in DPVO's calib format `fx fy cx cy k1 k2 p1 p2 k3` | OpenCV | The calib file exists and the reprojection error is under ~0.5 px | Code, CLI, guide, and synthetic tests on `feat/calibration`; real phone video and calibration file pending |
+| 2 | **Ingest** | Hash the video (its ID); read every frame's **real timestamp**; save a table frame number → video time, so a tag can point back to the exact moment in the original video | FFmpeg | Table and hash exist for the pilot video | Implementation and CLI added locally on `feat/video-ingest`; focused checks and pilot-video validation pending |
+| 3 | **Run DPVO** | Feed our frames and calibration to DPVO's Python API; save poses (TUM format) and 3D points; 5 runs | **DPVO, the only step that uses it** | A trajectory file exists for the pilot video (do a quick look with `demo.py` first) | Pending |
+| 4 | **Detect failures** | Scan the path for sudden jumps (impossible speed or rotation) and split it into trustworthy segments rather than draw one wrong map | numpy | A deliberately shaken test video gets split | Pending |
+| 5 | **Scale to metres** | User gives two frames and the real distance between them → multiply the path by real ÷ estimated distance | numpy | The two pilot floor marks come out ~10 m apart | Pending |
+| 6 | **Flatten to a top-down map** | Fit a plane to the path, take its least-varying direction as "up", project onto the floor; save JSON and PNG | numpy, matplotlib | The PNG of the pilot walk looks like the corridor | Pending |
+| 7 | **Batch command + manifest** | One command running steps 2–6 on many videos; a manifest per run (video hash, calib, DPVO commit, config, seed); one failed video does not stop the batch | Python CLI | A batch of 2+ videos produces outputs and manifests | Pending |
+| 8 | **Tests** | Scaling and flattening on fake paths with known answers; calibration parsing; timestamp → frame mapping | pytest | All tests pass | Calibration-specific synthetic tests added on `feat/calibration`; remaining suite and ingest checks pending |
+| 9 | **Viewer** (weeks 5–6) | Web page loading the video and map JSON: scrubbing moves a dot on the map; "tag" saves frame, position and note; "export" writes the report | HTML/JS, no GPU | Tag the pilot's two floor marks and export a report | Pending |
+| 10 | **Evaluation scripts** (later, for E3/E4) | Tag error vs. tape-measured marks; loop error; drift vs. distance | Python | Run on the full recording campaign | Pending; E1 passed, follow-up analysis/server run noted in Results log |
 
 **Order:** steps 0–2 first, plus a quick `demo.py` run on the pilot video to see how DPVO handles real footage. Then step 3 with our own ingest, followed by steps 5–6 (small, a few dozen lines each) with their tests. Then steps 4, 7 and 8, then the viewer.
 

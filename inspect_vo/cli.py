@@ -32,6 +32,17 @@ def _calibrate(args: argparse.Namespace) -> int:
     return 0 if res.quality != "poor" else 1
 
 
+def _ingest(args: argparse.Namespace) -> int:
+    from inspect_vo.ingest import ingest
+    try:
+        ingest(Path(args.video), Path(args.out), stride=args.stride)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"Ingest failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Ingested {args.video} into {args.out} (stride {args.stride})")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="inspect-vo",
@@ -59,10 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--free-k3", action="store_true", help="also fit k3 (only for wide-angle lenses)")
     p.set_defaults(func=_calibrate)
 
-    p = sub.add_parser("ingest", help="step 2: hash video, extract frames with real timestamps")
-    p.add_argument("video")
-    p.add_argument("--out", required=True, help="output directory for this video")
-    p.set_defaults(func=_not_built(2, "inspect_vo/ingest.py"))
+    p = sub.add_parser("ingest", help="step 2: hash video and map frames to source timestamps")
+    p.add_argument("video", help="source video to register")
+    p.add_argument("--out", required=True, help="output directory for video.json and frames.csv")
+    p.add_argument("--stride", type=int, default=1, help="record every Nth frame (default 1)")
+    p.set_defaults(func=_ingest)
 
     p = sub.add_parser("track", help="step 3: run DPVO on an ingested video")
     p.add_argument("workdir", help="directory written by `ingest`")
