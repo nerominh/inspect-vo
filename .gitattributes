@@ -1,0 +1,7 @@
+# Keep Linux line endings in the repo and in checkouts, so shell scripts run in WSL/Linux
+# even when the repo is cloned on Windows.
+* text=auto eol=lf
+*.pdf binary
+*.png binary
+*.jpg binary
+*.mp4 binary
