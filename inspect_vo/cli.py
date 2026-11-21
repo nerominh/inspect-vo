@@ -97,7 +97,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":

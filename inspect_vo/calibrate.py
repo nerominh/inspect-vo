@@ -18,6 +18,8 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
+import struct
+import zlib
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -33,26 +35,55 @@ COVERAGE_GRID = (8, 6)      # image split into 8 x 6 cells to measure where corn
 COVERAGE_MIN = 0.70         # want corners in at least 70% of cells, incl. edges, to pin down distortion
 
 
+def _validate_board(pattern: tuple[int, int], square_mm: float) -> None:
+    if len(pattern) != 2 or any(not isinstance(n, (int, np.integer)) or n < 2 for n in pattern):
+        raise ValueError("Board pattern must contain two integers of at least 2 inner corners.")
+    if not np.isfinite(square_mm) or square_mm <= 0:
+        raise ValueError("Square size must be finite and positive.")
+
+
 # ----------------------------------------------------------------------------------------- board
 def make_board(out: Path, cols: int = 9, rows: int = 6, square_mm: float = 25.0, dpi: int = 300) -> Path:
     """Write a printable checkerboard with `cols` x `rows` INNER corners (so cols+1 x rows+1 squares).
 
-    The default 10 x 7 squares of 25 mm = 250 x 175 mm fits on A4 landscape with a white margin,
-    which the detector needs.
+    The PNG is an A4 landscape page with embedded print resolution. The board is centred
+    with at least 5 mm of white border; oversized custom boards are refused.
     """
+    _validate_board((cols, rows), square_mm)
+    if not isinstance(dpi, int) or dpi <= 0:
+        raise ValueError("DPI must be a positive integer.")
+    out = Path(out)
+    if out.suffix.lower() != ".png":
+        raise ValueError("Board output must use .png to preserve print resolution.")
     px = int(round(square_mm / 25.4 * dpi))
-    margin = px
-    w, h = (cols + 1) * px + 2 * margin, (rows + 1) * px + 2 * margin
+    w, h = (int(round(mm / 25.4 * dpi)) for mm in (297, 210))
+    border = int(round(5 / 25.4 * dpi))
+    board_w, board_h = (cols + 1) * px, (rows + 1) * px
+    if px < 1 or board_w + 2 * border > w or board_h + 2 * border > h:
+        raise ValueError("Board must fit A4 landscape with a 5 mm white border; reduce square size or pattern.")
+    left, top = (w - board_w) // 2, (h - board_h) // 2
     img = np.full((h, w), 255, np.uint8)
     for r in range(rows + 1):
         for c in range(cols + 1):
             if (r + c) % 2 == 0:
-                y, x = margin + r * px, margin + c * px
+                y, x = top + r * px, left + c * px
                 img[y:y + px, x:x + px] = 0
     label = f"{cols}x{rows} inner corners, {square_mm} mm squares - print at 100% / actual size"
-    cv2.putText(img, label, (margin, h - margin // 3), cv2.FONT_HERSHEY_SIMPLEX, px / 120, 0, max(1, px // 60))
+    font_scale, thickness = dpi / 300, max(1, dpi // 150)
+    text_w = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0][0]
+    font_scale *= min(1, (w - 2 * border) / max(1, text_w))
+    cv2.putText(img, label, (border, h - max(1, border // 4)), cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale, 0, thickness)
+    ok, encoded = cv2.imencode(".png", img)
+    if not ok:
+        raise OSError("Could not encode printable board.")
+    # OpenCV does not embed DPI. Add the standard PNG pixels-per-metre chunk after IHDR.
+    ppm = int(round(dpi / 0.0254))
+    phys = b"pHYs" + struct.pack(">IIB", ppm, ppm, 1)
+    chunk = struct.pack(">I", 9) + phys + struct.pack(">I", zlib.crc32(phys) & 0xffffffff)
+    png = encoded.tobytes()
     out.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(out), img)
+    out.write_bytes(png[:33] + chunk + png[33:])
     return out
 
 
@@ -78,6 +109,7 @@ def detect(gray: np.ndarray, pattern: tuple[int, int]) -> np.ndarray | None:
 
 def board_points(pattern: tuple[int, int], square_mm: float) -> np.ndarray:
     """3D corner positions on the board plane (z = 0), in metres."""
+    _validate_board(pattern, square_mm)
     cols, rows = pattern
     obj = np.zeros((cols * rows, 3), np.float32)
     obj[:, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2) * (square_mm / 1000.0)
@@ -95,6 +127,8 @@ def cells_covered(corners: np.ndarray, size: tuple[int, int], grid=COVERAGE_GRID
 def select_views(views: list[dict], size: tuple[int, int], max_views: int = 40) -> list[dict]:
     """Greedy pick: each new view should cover image cells not seen yet, and differ in apparent
     board size (distance) and tilt. Many near-identical frames add time, not information."""
+    if not isinstance(max_views, int) or max_views < 1:
+        raise ValueError("max_views must be a positive integer.")
     remaining = list(views)
     chosen: list[dict] = []
     covered: set[tuple[int, int]] = set()
@@ -243,6 +277,11 @@ def sha256(path: Path) -> str:
 
 def collect_views(video: Path, pattern: tuple[int, int], square_mm: float, every: int, min_sharp: float,
                   log=print) -> tuple[list[dict], tuple[int, int], dict]:
+    _validate_board(pattern, square_mm)
+    if not isinstance(every, int) or every < 1:
+        raise ValueError("every must be a positive integer.")
+    if not np.isfinite(min_sharp) or min_sharp < 0:
+        raise ValueError("min_sharp must be finite and nonnegative.")
     cap = cv2.VideoCapture(str(video))
     if not cap.isOpened():
         raise SystemExit(f"Cannot open {video}. If it is HEVC/HDR, re-record with H.264 ('Most Compatible').")
@@ -285,7 +324,7 @@ def write_check_image(video: Path, frame_idx: int, corners: np.ndarray, pattern,
     ok, frame = cap.read()
     cap.release()
     if not ok:
-        return
+        raise OSError(f"Cannot read frame {frame_idx} from {video} for the check image.")
     left = frame.copy()
     cv2.drawChessboardCorners(left, pattern, corners, True)
     right = cv2.undistort(frame, np.array(res.K), np.array(res.dist))
@@ -294,12 +333,25 @@ def write_check_image(video: Path, frame_idx: int, corners: np.ndarray, pattern,
     cv2.putText(both, "undistorted: board edges should be straight", (left.shape[1] + 20, 50),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
     scale = 1600 / both.shape[1]
-    cv2.imwrite(str(out), cv2.resize(both, None, fx=scale, fy=scale), [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not cv2.imwrite(str(out), cv2.resize(both, None, fx=scale, fy=scale), [cv2.IMWRITE_JPEG_QUALITY, 85]):
+        raise OSError(f"Cannot write check image: {out}")
 
 
 def run(video: Path, out: Path, square_mm: float, pattern: tuple[int, int] = (9, 6), every: int = 5,
         max_views: int = 40, min_sharp: float = 50.0, notes: str = "", free_k3: bool = False) -> CalibResult:
     """Full step 1: write `out` (DPVO calib line), `out` with .json (record) and <stem>_check.jpg."""
+    video, out = Path(video), Path(out)
+    if out.suffix.lower() != ".txt":
+        raise ValueError("Calibration output must use .txt (.json is reserved for metadata).")
+    outputs = [out, out.with_suffix(".json"), out.with_name(out.stem + "_check.jpg")]
+    paths = [video, *outputs]
+    for i, path in enumerate(paths):
+        for other in paths[:i]:
+            if (path.resolve() == other.resolve()
+                    or (path.exists() and other.exists() and path.samefile(other))):
+                raise ValueError(f"Input video and output files must use distinct paths: {path}, {other}")
+    if not isinstance(max_views, int) or max_views < 8:
+        raise ValueError("max_views must be an integer of at least 8.")
     views, size, info = collect_views(video, pattern, square_mm, every, min_sharp)
     chosen = select_views(views, size, max_views)
     print(f"Using {len(chosen)} diverse views for calibration.")
@@ -315,7 +367,7 @@ def run(video: Path, out: Path, square_mm: float, pattern: tuple[int, int] = (9,
         "video": {"file": Path(video).name, "sha256": sha256(Path(video)), **info},
         "settings": {"every_nth_frame": every, "max_views": max_views, "min_sharpness": min_sharp,
                      "free_k3": free_k3},
-        "opencv": cv2.__version__, "host": platform.node(), "notes": notes,
+        "opencv": cv2.__version__, "host": platform.node(), "capture_notes": notes,
     }
     out.with_suffix(".json").write_text(json.dumps(record, indent=2))
     best = max(chosen, key=lambda v: v["sharpness"])
@@ -349,9 +401,11 @@ def calibrate_from_video(video: Path, square_mm: float, pattern: tuple[int, int]
 
 
 def write_calib(path: Path, K: np.ndarray, dist: np.ndarray) -> None:
-    """Write `fx fy cx cy k1 k2 p1 p2 k3` on one line (DPVO calib format)."""
+    """Write pinhole intrinsics and optional 4/5 distortion coefficients (DPVO format)."""
     K = np.asarray(K, dtype=float)
-    vals = [K[0, 0], K[1, 1], K[0, 2], K[1, 2], *np.asarray(dist, dtype=float).ravel()[:5]]
+    dist = np.asarray(dist, dtype=float).ravel()
+    _validate_calib(K, dist)
+    vals = [K[0, 0], K[1, 1], K[0, 2], K[1, 2], *dist]
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(" ".join(f"{v:.6f}" for v in vals) + "\n")
 
@@ -359,8 +413,21 @@ def write_calib(path: Path, K: np.ndarray, dist: np.ndarray) -> None:
 def read_calib(path: Path) -> tuple[np.ndarray, np.ndarray]:
     """Read a DPVO calib file -> (K 3x3, dist). dist is empty if the file has only 4 values."""
     vals = np.loadtxt(path, dtype=float).ravel()
-    if vals.size < 4:
-        raise ValueError(f"{path}: expected at least 4 values (fx fy cx cy), got {vals.size}")
+    if vals.size not in (4, 8, 9):
+        raise ValueError(f"{path}: expected 4, 8 or 9 values (intrinsics and optional distortion), got {vals.size}")
     fx, fy, cx, cy = vals[:4]
     K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
-    return K, vals[4:].copy()
+    dist = vals[4:].copy()
+    _validate_calib(K, dist)
+    return K, dist
+
+
+def _validate_calib(K: np.ndarray, dist: np.ndarray) -> None:
+    if K.shape != (3, 3) or not np.isfinite(K).all():
+        raise ValueError("Camera matrix must be a finite 3x3 matrix.")
+    if K[0, 0] <= 0 or K[1, 1] <= 0:
+        raise ValueError("Focal lengths must be positive.")
+    if not np.allclose(K[[0, 1, 2, 2, 2], [1, 0, 0, 1, 2]], [0, 0, 0, 0, 1]):
+        raise ValueError("DPVO requires a zero-skew camera matrix with last row [0, 0, 1].")
+    if dist.size not in (0, 4, 5) or not np.isfinite(dist).all():
+        raise ValueError("Distortion must contain 0, 4 or 5 finite coefficients.")

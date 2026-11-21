@@ -44,6 +44,10 @@ cardboard or a clipboard; a bent board ruins calibration. Measure one square wit
 be 25 mm; if your printer scaled it, use the measured value. (The square size doesn't affect the
 camera values DPVO needs; it is recorded for completeness, so a ruler is accurate enough.)
 
+The PNG includes 300 DPI print metadata and an A4 landscape canvas with a white border.
+Choose landscape orientation and disable any automatic scaling. Custom boards must also fit A4;
+reduce `--square-mm` or `--pattern` if the command reports that the board is too large.
+
 ## 3. Film the board (30-60 seconds)
 
 Use the phone, app and settings from step 1. Put the board on a table or wall in even light without
@@ -66,6 +70,9 @@ Name the file as `calib/README.md` says (`<owner>_<phone-model>_<resolution>_<fp
 - `huy_iphone13_1080p_30.txt`: the camera line DPVO uses (`fx fy cx cy k1 k2 p1 p2 k3`);
 - `huy_iphone13_1080p_30.json`: full record (error, coverage, image size, video checksum, notes);
 - `huy_iphone13_1080p_30_check.jpg`: detected corners and an undistorted frame.
+
+`--out` must end in `.txt`. In the JSON record, `notes` stores calibration warnings and
+`capture_notes` stores the phone/app/settings text supplied with `--notes`.
 
 The command exits with code 1 if the quality is POOR.
 

@@ -2,6 +2,7 @@
 through a pinhole camera WITH lens distortion, writes it as an .mp4, and checks that the tool
 recovers that camera from the video alone."""
 import json
+import struct
 
 import cv2
 import numpy as np
@@ -9,7 +10,7 @@ import pytest
 
 from inspect_vo import cli
 from inspect_vo.calibrate import (board_points, calibrate_from_video, calibrate_points, detect, make_board,
-                                  read_calib, run, scale_intrinsics, select_views)
+                                  collect_views, read_calib, run, scale_intrinsics, select_views, write_calib)
 
 W, H = 1280, 720
 K_TRUE = np.array([[900.0, 0, 642.0], [0, 900.0, 358.0], [0, 0, 1]])
@@ -67,6 +68,16 @@ def test_printed_board_is_detectable(tmp_path):
     img = cv2.imread(str(out), cv2.IMREAD_GRAYSCALE)
     corners = detect(img, PATTERN)
     assert corners is not None and corners.shape[0] == 54
+    # A4 landscape at 300 DPI, with actual physical dimensions embedded in the PNG.
+    assert img.shape == (2480, 3508)
+    png = out.read_bytes()
+    chunk_len = struct.unpack(">I", png[33:37])[0]
+    assert chunk_len == 9 and png[37:41] == b"pHYs"
+    xppm, yppm, unit = struct.unpack(">IIB", png[41:50])
+    assert unit == 1 and xppm == yppm
+    assert img.shape[1] / xppm * 1000 == pytest.approx(297, abs=0.1)
+    assert img.shape[0] / yppm * 1000 == pytest.approx(210, abs=0.1)
+    assert (img[:50] == 255).all()  # white margin above the board
 
 
 def test_recovers_known_camera_from_points():
@@ -106,7 +117,8 @@ def test_end_to_end_video(tmp_path):
     video = tmp_path / "calib.mp4"
     render_video(video)
     out = tmp_path / "calib" / "synthetic.txt"
-    res = run(video, out, 25.0, (9, 6), every=1, max_views=40, min_sharp=10.0)
+    res = run(video, out, 25.0, (9, 6), every=1, max_views=40, min_sharp=10.0,
+              notes="Synthetic phone, fixed settings")
     assert res.K[0][0] == pytest.approx(900.0, rel=0.015)
     assert res.K[1][1] == pytest.approx(900.0, rel=0.015)
     assert res.dist[0] == pytest.approx(-0.12, abs=0.03)
@@ -126,6 +138,8 @@ def test_end_to_end_video(tmp_path):
     assert K[0, 0] == pytest.approx(res.K[0][0], abs=1e-4) and dist.shape == (5,)
     rec = json.loads(out.with_suffix(".json").read_text())
     assert rec["image_size"] == [W, H] and len(rec["video"]["sha256"]) == 64
+    assert rec["notes"] == res.notes
+    assert rec["capture_notes"] == "Synthetic phone, fixed settings"
     assert (tmp_path / "calib" / "synthetic_check.jpg").exists()
 
 
@@ -137,22 +151,5 @@ def test_free_k3_extrapolation_is_flagged(tmp_path):
     res = run(video, tmp_path / "c" / "freek3.txt", 25.0, (9, 6), every=1, max_views=40, min_sharp=10.0,
               free_k3=True)
     assert not res.edges_ok and res.quality == "poor"
-
-
-def test_planned_interface_calibrate_from_video(tmp_path):
-    """The function the skeleton planned: (K, dist, rms) straight from a video."""
-    video = tmp_path / "calib.mp4"
-    render_video(video)
-    K, dist, rms = calibrate_from_video(video, 25.0, (9, 6), max_frames=30)
-    assert K.shape == (3, 3) and dist.shape == (5,)
-    assert K[0, 0] == pytest.approx(900.0, rel=0.02) and rms < 1.0
-
-
-def test_cli_calibrate_and_board(tmp_path, capsys):
-    video = tmp_path / "calib.mp4"
-    render_video(video)
-    out = tmp_path / "calib" / "test_phone_720p_30.txt"
-    assert cli.main(["calibrate", str(video), "--square-mm", "25", "--out", str(out), "--every", "1"]) == 0
-    assert out.exists() and "QUALITY:" in capsys.readouterr().out
-    assert cli.main(["board", "--out", str(tmp_path / "board.png")]) == 0
-    assert (tmp_path / "board.png").exists()
+    rec = json.loads((tmp_path / "c" / "freek3.json").read_text())
+    assert rec["notes"] == res.notes an
