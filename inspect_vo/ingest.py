@@ -1,7 +1,7 @@
 """Step 2: register a video and map frames to their real source timestamps.
 
 Outputs in the video's work directory:
-    video.json   - content hash (sha256), path, resolution, frame count, nominal fps
+    video.json   - content hash (sha256), path, display/coded resolution, frame count, average fps
     frames.csv   - frame_index, source_timestamp_s (one row per frame used)
 
 FFprobe supplies presentation timestamps from the video stream. We do not infer
@@ -68,7 +68,7 @@ def _timestamp(frame: dict[str, Any], frame_index: int) -> float:
     return timestamp
 
 
-def _fps(stream: dict[str, Any]) -> float | None:
+def _avg_fps(stream: dict[str, Any]) -> float | None:
     """Parse FFprobe's rational frame-rate metadata, preferring the average rate."""
     for key in ("avg_frame_rate", "r_frame_rate"):
         value = stream.get(key)
@@ -81,6 +81,50 @@ def _fps(stream: dict[str, Any]) -> float | None:
         if math.isfinite(rate) and rate > 0:
             return rate
     return None
+
+
+def _rotation(stream: dict[str, Any]) -> float:
+    """Read the display rotation in degrees from FFprobe stream side data.
+
+    Older containers may expose the same value as a ``rotate`` stream tag.
+    Videos without orientation metadata are treated as unrotated.
+    """
+    for side_data in stream.get("side_data_list") or []:
+        value = side_data.get("rotation")
+        if value not in (None, "N/A", ""):
+            try:
+                angle = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(angle):
+                return angle
+    value = (stream.get("tags") or {}).get("rotate")
+    if value not in (None, "N/A", ""):
+        try:
+            angle = float(value)
+        except (TypeError, ValueError):
+            pass
+        else:
+            if math.isfinite(angle):
+                return angle
+    return 0.0
+
+
+def _display_dimensions(width: int, height: int, rotation: float) -> tuple[int, int]:
+    """Return the oriented dimensions commonly produced by auto-rotating video decoders."""
+    quarter_turn = rotation % 180
+    if math.isclose(quarter_turn, 90.0, abs_tol=1e-3):
+        return height, width
+    return width, height
+
+
+def _rotation_warning(rotation: float) -> str | None:
+    if math.isclose(rotation % 360, 0.0, abs_tol=1e-3):
+        return None
+    return (
+        f"Video display rotation is {rotation:g} degrees. The current calibration is landscape-only; "
+        "confirm the displayed orientation and use a matching calibration before running DPVO."
+    )
 
 
 def _probe_video(video: Path) -> tuple[dict[str, Any], list[tuple[int, float]]]:
@@ -97,7 +141,7 @@ def _probe_video(video: Path) -> tuple[dict[str, Any], list[tuple[int, float]]]:
         "-v", "error",
         "-select_streams", "v:0",
         "-show_entries",
-        "stream=width,height,nb_frames,avg_frame_rate,r_frame_rate:"
+        "stream=width,height,nb_frames,avg_frame_rate,r_frame_rate:stream_side_data=rotation:"
         "frame=best_effort_timestamp_time,pts_time",
         "-show_frames",
         "-of", "json",
@@ -135,13 +179,28 @@ def _probe_video(video: Path) -> tuple[dict[str, Any], list[tuple[int, float]]]:
         timestamps.append((frame_index, timestamp))
         previous = timestamp
 
+    coded_width = int(stream["width"]) if stream.get("width") is not None else None
+    coded_height = int(stream["height"]) if stream.get("height") is not None else None
+    rotation = _rotation(stream)
+    if coded_width is not None and coded_height is not None:
+        display_width, display_height = _display_dimensions(coded_width, coded_height, rotation)
+    else:
+        display_width, display_height = coded_width, coded_height
+    warning = _rotation_warning(rotation)
     metadata = {
         "path": str(video.resolve()),
-        "width": int(stream["width"]) if stream.get("width") is not None else None,
-        "height": int(stream["height"]) if stream.get("height") is not None else None,
+        # width/height describe the displayed frames consumed by orientation-aware decoders.
+        "width": display_width,
+        "height": display_height,
+        "coded_width": coded_width,
+        "coded_height": coded_height,
+        "rotation": rotation,
         "frame_count": len(timestamps),
-        "nominal_fps": _fps(stream),
+        "avg_fps": _avg_fps(stream),
+        "start_time_s": timestamps[0][1],
     }
+    if warning:
+        metadata["warnings"] = [warning]
     return metadata, timestamps
 
 
@@ -168,7 +227,7 @@ def _write_temp(path: Path, writer) -> Path:
     return temp_path
 
 
-def ingest(video: Path, workdir: Path, stride: int = 1) -> None:
+def ingest(video: Path, workdir: Path, stride: int = 1) -> dict[str, Any]:
     """Write video.json and frames.csv into ``workdir``.
 
     ``frames.csv`` keeps original decoded frame indices when ``stride`` is greater
@@ -208,3 +267,4 @@ def ingest(video: Path, workdir: Path, stride: int = 1) -> None:
     finally:
         for temp_path in temp_paths:
             temp_path.unlink(missing_ok=True)
+    return metadata

@@ -35,10 +35,12 @@ def _calibrate(args: argparse.Namespace) -> int:
 def _ingest(args: argparse.Namespace) -> int:
     from inspect_vo.ingest import ingest
     try:
-        ingest(Path(args.video), Path(args.out), stride=args.stride)
+        metadata = ingest(Path(args.video), Path(args.out), stride=args.stride)
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Ingest failed: {exc}", file=sys.stderr)
         return 1
+    for warning in metadata.get("warnings", []):
+        print(f"WARNING: {warning}", file=sys.stderr)
     print(f"Ingested {args.video} into {args.out} (stride {args.stride})")
     return 0
 
